@@ -1127,4 +1127,3 @@ def main():
 
 if __name__ == "__main__":
     xmldoc, sim_table, injections = main()
-
