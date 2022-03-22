@@ -321,7 +321,6 @@ if args.wavdecm=='cwt':
 			plt.clf()
 			#print('Analysed ' + name + ' successfully')
 
-
 elif args.wavdecm=='dwt':
 		for i in range(len(sim_keys)):
 			massA = massA_list[i]
@@ -347,9 +346,11 @@ elif args.wavdecm=='dwt':
 				resampled_hplus = scipy.signal.resample(hplus, no_samp)
 				resampled_hcross = scipy.signal.resample(hcross, no_samp)
 				resamp_time = np.arange(0,no_samp/sampling_rate,1/sampling_rate)
-				env = np.sqrt(resampled_hplus**2 + resampled_hcross**2)
+				time_step = 1/sampling_rate
+
 				
 				#Cutting inspiral off
+				env = np.sqrt(resampled_hplus**2 + resampled_hcross**2)
 				env_max = np.argmax(env)
 
 				for l in range(env_max, no_samp):
@@ -357,14 +358,23 @@ elif args.wavdecm=='dwt':
 		        			cut_point = l
 		        			break
 		        
-				postmerger = resampled_hplus[cut_point:]
+				postmerger = resampled_hplus[cut_point:]             #only real data
 				pm_time = resamp_time[cut_point:]
+
+				#Padding signal with zeros to regularise the number of levels
+				no_pads = 2048
+				n = len(postmerger)
+				postmerger = np.append(postmerger, np.zeros(no_pads-n))
+				pm_time = np.append(pm_time, np.arange(n/sampling_rate, no_pads/sampling_rate, 1/sampling_rate))
+
+
+				#print(len(hplus), len(resampled_hplus))
 
 				#Making sure the signal has even number of samples for minimizing discrepancy (a little hard coding)
 
-				if len(postmerger)%2 != 0:
-					postmerger = postmerger[:-1]
-					pm_time = pm_time[:-1]
+				#if len(postmerger)%2 != 0:
+				#	postmerger = postmerger[:-1]
+				#	pm_time = pm_time[:-1]
 
 
 				#Plotting the gwf
@@ -391,8 +401,49 @@ elif args.wavdecm=='dwt':
 				waveletobj = pywt.Wavelet('db14')
 
 			
-				#CWT on the gwf using the Morlet wavelet
-				coefs = pywt.wavedec(postmerger, waveletobj)
+				#DWT on the gwf using the Morlet wavelet
+				coefs = pywt.wavedec(postmerger, waveletobj, level=4)
+				print(len(postmerger), len(coefs))
+
+				fig = plt.figure(figsize=[15,7])
+				fig.tight_layout()
+
+				plt.subplots_adjust(wspace= 0.15, hspace= 0.15)
+
+				sub3 = fig.add_subplot(6,2,(1,2))
+				sub3.plot(pm_time, postmerger)
+				sub3.set_title('Original GW postmerger signal')
+
+				int_pm_sig = np.trapz(postmerger**2)
+
+				for itr in range(len(coefs)):
+					ctr = sampling_rate/2
+					sub1 = fig.add_subplot(6,2,3+2*itr)
+					sub1.plot(coefs[itr])
+					if itr==0:
+						sub1.set_title('Level' + str(len(coefs)-itr) + ' ' + '0Hz to ' + str(ctr/2**(len(coefs)-itr-1)) + 'Hz')
+					else:
+						sub1.set_title('Level' + str(len(coefs)-itr) + ' ' + str(ctr/2**(len(coefs)-itr)) + 'Hz to ' + str(ctr/2**(len(coefs)- itr-1)) + 'Hz')
+					coefcp = [np.zeros_like(x) for x in coefs]
+					coefcp[itr] = coefs[itr].copy()
+					sig = pywt.waverec(coefcp, waveletobj)
+					sigcp = sig.copy()
+					sigcp = scipy.signal.resample(sigcp, len(postmerger))
+					int_rec_sig = np.trapz(sigcp**2)
+					int_both = np.trapz(postmerger*sigcp)
+					euc_ov = int_both/(np.sqrt(int_pm_sig*int_rec_sig))
+					sub2 = fig.add_subplot(6,2,4+2*itr)
+					sub2.plot(sig)
+					sub2.set_title('Euclidean overlap = ' + str(euc_ov))
+
+				
+
+				#ax[0,1].set_title('Level wise reconstruction')
+				fig.suptitle(name + ' BNSPM signal ' + str(massA) + '-' + str(massB) + r' $M_{sol}$ binary  at ' + str(sampling_rate) + 'Hz')
+				plt.tight_layout()   
+
+
+				plt.savefig(args.dirname + '/' + name + '_levelwise.png')
 
 				#Reconstructing the signal using complete information
 				sig1 = pywt.waverec(coefs, waveletobj)
@@ -415,52 +466,52 @@ elif args.wavdecm=='dwt':
 					if args.polikar_diag==True:
 						x = np.arange(1,netl+1,1)
 						fig, ax = plt.subplots(2,1,figsize=[15,7])
-						ax[1].plot(x, flat_coef)
-						ax[1].set_title('Coefficient amplitude vs DWT samples (mode-smooth padding)')
-						ax[1].set_xlabel('DWT coefficients')
-						ax[1].set_ylabel('Coefficient Amplitude')
-
 						ax[0].plot(pm_time, postmerger)
 						ax[0].set_title('GW signal being used')
 						ax[0].set_xlabel('Time')
 						ax[0].set_ylabel('Strain magnitude')
 
+						ax[1].plot(x, flat_coef)
+						ax[1].set_title('Coefficient amplitude vs DWT samples (mode-smooth padding)')
+						ax[1].set_xlabel('DWT coefficients')
+						ax[1].set_ylabel('Coefficient Amplitude')
+
+						
+
 						plt.savefig('./'+args.dirname +'/coefamps'+ name +'.png')
+						plt.close()
 
 				#Reconstructing signal using lesser coefficients
-				counter = 0
-				for carr in rec:
-				    for i in range(len(carr)):
-				        if np.abs(carr[i]) < args.lowbound: 
-				            carr[i] = 0
-				            counter += 1
-				print(str(counter*100/netl) + '% of coefficients have been successfully ignored')
+				# counter = 0
+				# for carr in rec:
+				#     for i in range(len(carr)):
+				#         if np.abs(carr[i]) < args.lowbound: 
+				#             carr[i] = 0
+				#             counter += 1
+				# print(str(counter*100/netl) + '% of coefficients have been successfully ignored')
 
-				sig2 = pywt.waverec(rec, waveletobj)
+				# sig2 = pywt.waverec(rec, waveletobj)
 
-				fig, ax = plt.subplots(2,1,figsize=[15,7])
-				ax[0].plot(pm_time, postmerger, label = 'Original Signal')
-				ax[0].plot(pm_time, sig1, '.', label = 'Reconstruction using all coefficients')
-				int_pm_sig = np.trapz(postmerger**2)
-				int_rec_sig = np.trapz(sig1**2)
-				int_both = np.trapz(postmerger*sig1)
-				euc_ov = int_both/(np.sqrt(int_pm_sig*int_rec_sig))
-				ax[0].set_title('Reconstruction of ' + name + ' using all coefficients with a Euclidean overlap of ' + "{:.2f}".format(euc_ov*100) + '%')
+				# fig, ax = plt.subplots(2,1,figsize=[15,7])
+				# ax[0].plot(pm_time, postmerger, label = 'Original Signal')
+				# ax[0].plot(pm_time, sig1, '.', label = 'Reconstruction using all coefficients')
+				# int_pm_sig = np.trapz(postmerger**2)
+				# int_rec_sig = np.trapz(sig1**2)
+				# int_both = np.trapz(postmerger*sig1)
+				# euc_ov = int_both/(np.sqrt(int_pm_sig*int_rec_sig))
+				# ax[0].set_title('Reconstruction of ' + name + ' using all coefficients with a Euclidean overlap of ' + "{:.2f}".format(euc_ov*100) + '%')
 				
-				ax[1].plot(pm_time, postmerger, label = 'Original Signal')
-				ax[1].plot(pm_time, sig2, '.', label = 'Reconstruction using top coefficients')
-				int_rec_sig = np.trapz(sig2**2)
-				int_both = np.trapz(postmerger*sig2)
-				euc_ov = int_both/(np.sqrt(int_pm_sig*int_rec_sig))
-				ax[1].set_title('Reconstruction of ' + name + ' using top coefficients with a Euclidean overlap of ' + "{:.2f}".format(euc_ov*100) + '% ignoring ' + "{:.2f}".format(counter*100/netl) + '% of coefficients')
-				plt.legend()
-				plt.savefig('./'+args.dirname +'/frecons'+ name +'.png')
-				#plt.plot(pm_time, postmerger, label = 'original')
+				# ax[1].plot(pm_time, postmerger, label = 'Original Signal')
+				# ax[1].plot(pm_time, sig2, '.', label = 'Reconstruction using top coefficients')
+				# int_rec_sig = np.trapz(sig2**2)
+				# int_both = np.trapz(postmerger*sig2)
+				# euc_ov = int_both/(np.sqrt(int_pm_sig*int_rec_sig))
+				# ax[1].set_title('Reconstruction of ' + name + ' using top coefficients with a Euclidean overlap of ' + "{:.2f}".format(euc_ov*100) + '% ignoring ' + "{:.2f}".format(counter*100/netl) + '% of coefficients')
+				# plt.legend()
+				# plt.savefig('./'+args.dirname +'/frecons'+ name +'.png')
+				# plt.close()
+				# #plt.plot(pm_time, postmerger, label = 'original')
 
-
-				
-
-	
 else:
 	print('Invalid wavelet decomposition method. Please correctly specify either DWT or CWT')
 
@@ -475,4 +526,3 @@ plt.plot(num_samples, euclidean_overlap)
 plt.xlabel('Number of samples')
 plt.ylabel('Euclidean Overlap')
 plt.savefig('euc_ov.png')
-#print(num_samples)
